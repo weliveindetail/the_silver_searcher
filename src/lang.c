@@ -19,6 +19,7 @@ lang_spec_t langs[] = {
     { "cfmx", { "cfc", "cfm", "cfml" } },
     { "chpl", { "chpl" } },
     { "clojure", { "clj", "cljs", "cljc", "cljx" } },
+    { "cmake", { "CMakeLists.txt", "cmake", "in" } },
     { "coffee", { "coffee", "cjsx" } },
     { "config", { "config" } },
     { "coq", { "coq", "g", "v" } },
@@ -145,35 +146,63 @@ size_t get_lang_count() {
     return sizeof(langs) / sizeof(lang_spec_t);
 }
 
-char *make_lang_regex(char *ext_array, size_t num_exts) {
+char *make_lang_regex(char *file_type_array, size_t num_types) {
     int regex_capacity = 100;
     char *regex = ag_malloc(regex_capacity);
     int regex_length = 3;
     int subsequent = 0;
-    char *extension;
+    char *file_type;
     size_t i;
 
     strcpy(regex, "\\.(");
 
-    for (i = 0; i < num_exts; ++i) {
-        extension = ext_array + i * SINGLE_EXT_LEN;
-        int extension_length = strlen(extension);
-        while (regex_length + extension_length + 3 + subsequent > regex_capacity) {
+    for (i = 0; i < num_types; ++i) {
+        file_type = file_type_array + i * SINGLE_EXT_LEN;
+        int file_type_len = strlen(file_type);
+        while (regex_length + file_type_len + 3 + subsequent > regex_capacity) {
             regex_capacity *= 2;
             regex = ag_realloc(regex, regex_capacity);
         }
-        if (subsequent) {
-            regex[regex_length++] = '|';
+
+        // Consider extensions with a dot as full file name masks. Escape the
+        // dot and append mask to front of regex.
+        char *dot_pos = strchr(file_type, '.');
+        if (dot_pos) {
+            if (strchr(dot_pos + 1, '.')) {
+                die("File name masks with more than one dot not supported: %s",
+                    file_type);
+            }
+
+            memmove(regex + file_type_len + 2, regex, regex_length);
+
+            int pre_dot_len = dot_pos - file_type;
+            strncpy(regex, file_type, pre_dot_len);
+            regex[pre_dot_len] = '\\';
+            strcpy(regex + pre_dot_len + 1, dot_pos);
+
+            regex[file_type_len + 1] = '|'; // replace null
+            regex_length += file_type_len + 2;
         } else {
-            subsequent = 1;
+            if (subsequent) {
+                regex[regex_length++] = '|';
+            } else {
+                subsequent = 1;
+            }
+            strcpy(regex + regex_length, file_type);
+            regex_length += file_type_len;
         }
-        strcpy(regex + regex_length, extension);
-        regex_length += extension_length;
     }
 
-    regex[regex_length++] = ')';
-    regex[regex_length++] = '$';
-    regex[regex_length++] = 0;
+    if (subsequent) {
+        regex[regex_length++] = ')';
+        regex[regex_length++] = '$';
+        regex[regex_length++] = 0;
+    } else {
+        // Remove '|\.(' if we had no extensions at all.
+        regex_length -= 4;
+        regex[regex_length++] = 0;
+    }
+
     return regex;
 }
 
